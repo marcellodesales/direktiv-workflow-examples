@@ -1,0 +1,110 @@
+# Event Inputs:
+# {
+#   "com.direktiv.endpoint.change.request": {
+#     "data": {
+#       "ip": "3.26.24.101",
+#       "newpass": "340535LUx633ch9A",
+#       "oldpass": {
+#         "root": "password",
+#         "wwonigkeit": "password"
+#       },
+#       "type": "linux",
+#       "user": "wwonigkeit",
+#       "vault": "hashicorp"
+#     },
+#     "datacontenttype": "application/json",
+#     "endpoint": "linux",
+#     "id": "24fb8dcc-5f41-4354-9f92-6fd0e8e212f9",
+#     "ip": "3.26.24.101",
+#     "source": "vaults/hashicorp-vault",
+#     "specversion": "1.0",
+#     "type": "com.direktiv.endpoint.change.request",
+#     "vault": "hashicorp"
+#   }
+# }
+#
+description: A simple workflow to log in to an SSH server and change the password
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# vault workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: change-password
+  event: 
+    type: com.direktiv.endpoint.change.request
+    context:
+      endpoint: "linux"
+
+#
+# Use the SSH/SCP direktiv-app container to make the connnection to the type: linux
+# devices. This is a generic container which executes SSH or SCP commands / scripts
+# and can be used for anything else SSH
+#
+functions:
+  - id: ssh
+    image: direktiv/sshscp
+    type: reusable
+
+states:
+#
+#
+# Login to the Linux / UNIX server and run the command passed from the event.
+# The command is generated from the master workflow. This ensures that this workflow stays
+# very generic and can be used to execute any command (including the validation step)
+#
+- id: change-password
+  log: jq(.)
+  # log: initiating ssh connection and password change to jq(."com.direktiv.endpoint.run".data.ip)
+  type: action
+  action:
+    function: ssh
+    input: 
+      actions:
+      - type: ssh
+        host: jq(."com.direktiv.endpoint.change.request".data.user + "@" + ."com.direktiv.endpoint.change.request".data.ip)
+        # The following jq command selects the password for the "user" specified
+        auth: jq(."com.direktiv.endpoint.change.request".data | .oldpass.[.user])
+        output: "/tmp/out"  # reading /tmp/out at the end
+        files:
+        - name: changepasswd.sh
+          type: plain
+          data: |
+            sudo sh -c "echo 'jq(."com.direktiv.endpoint.change.request".data.newpass)' | passwd --stdin jq(."com.direktiv.endpoint.change.request".data.user)"
+  transition: generate-success
+  transform: jq(. = ."com.direktiv.endpoint.change.request".data)
+  catch:
+  - error: "*"
+    transition: generate-failure
+
+#
+#
+# Log the error for the password change
+- id: generate-failure
+  type: generateEvent
+  # log: generating failure event for ssh password change jq(.)
+  log: jq(.error)
+  event:
+    type: com.direktiv.endpoint.change.failure
+    source: endpoints/linux
+    data: jq(.error)
+    context:
+      ipaddress: jq(."com.direktiv.endpoint.change.request".data.ip)
+      msg: jq(.error.msg)
+#
+#
+# Generate a success event notifying the sub-workflows of successful password change 
+- id: generate-success
+  type: generateEvent
+  # log: generating success event for ssh password change jq(.)
+  log: jq(.)
+  event: 
+    type: com.direktiv.endpoint.verify.request
+    source: endpoints/linux
+    data: jq(.)
+    context:
+      ipaddress: jq(.ip)
+      vault: jq(.vault)
+      endpoint: jq(.type)
+

@@ -1,0 +1,106 @@
+# {
+#   "com.direktiv.endpoint.run": {
+#     "data": {
+#       "ip": "13.239.47.38",
+#       "newpass": "ZIO4ZJIE94McJ9khTjT9G5}Qc4V_1Y6Iob2*",
+#       "oldpass": {
+#         "direktiv": "Th1s1sth3P@ssw0rd"
+#       },
+#       "type": "linux",
+#       "user": "wwonigkeit",
+#       "vault": "hashicorp"
+#     },
+#     "datacontenttype": "application/json",
+#     "endpoint": "linux",
+#     "id": "d83c9305-71c9-499a-a4e6-656f43f522da",
+#     "source": "password-rotation/rotate-passwords",
+#     "specversion": "1.0",
+#     "type": "com.direktiv.endpoint.run"
+#   }
+# }
+#
+description: A simple workflow to log in to an SSH server and verify the successfull connection and the password
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# vault workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: verify-login
+  event: 
+    type: com.direktiv.endpoint.verify.request
+    context:
+      endpoint: "linux"
+
+#
+# Use the SSH/SCP direktiv-app container to make the connnection to the type: linux
+# devices. This is a generic container which executes SSH or SCP commands / scripts
+# and can be used for anything else SSH
+#
+functions:
+  - id: ssh
+    image: direktiv/sshscp
+    type: reusable
+
+states:
+#
+#
+# Login to the Linux / UNIX server and run the command passed from the event.
+# The command is generated from the master workflow. This ensures that this workflow stays
+# very generic and can be used to execute any command (including the validation step)
+#
+- id: verify-login
+  # log: initiating ssh connection and connection check to jq(."com.direktiv.endpoint.verify.request".data.ip)
+  log: jq(.)
+  type: action
+  action:
+    function: ssh
+    input: 
+      actions:
+      - type: ssh
+        host: jq(."com.direktiv.endpoint.verify.request".data.user + "@" + ."com.direktiv.endpoint.verify.request".data.ip)
+        # The following jq command selects the password for the "user" specified
+        auth: jq(."com.direktiv.endpoint.verify.request".data.newpass)
+        output: "/tmp/out"  # reading /tmp/out at the end
+        files:
+        - name: changepasswd.sh
+          type: plain
+          data: |
+            whoami
+  transition: generate-success
+  transform: jq(. = ."com.direktiv.endpoint.verify.request".data)
+  catch:
+  - error: "*"
+    transition: generate-failure
+
+#
+#
+# Log the error for the password change
+- id: generate-failure
+  type: generateEvent
+  # log: generating failure event for ssh password change jq(.)
+  log: jq(.error)
+  event:
+    type: com.direktiv.endpoint.verify.failure
+    source: endpoints/linux
+    data: jq(.error)
+    context:
+      ipaddress: jq(."com.direktiv.endpoint.verify.request".data.ip)
+      msg: jq(.error.msg)
+
+#
+#
+# Generate a success event notifying the sub-workflows of successful password change 
+- id: generate-success
+  type: generateEvent
+  # log: generating success event for ssh password change jq(.)
+  log: jq(.)
+  event: 
+    type: com.direktiv.vault.update.request
+    source: endpoints/linux
+    data: jq(.)
+    context:
+      ipaddress: jq(.ip)
+      vault: jq(.vault)
+      endpoint: jq(.type)

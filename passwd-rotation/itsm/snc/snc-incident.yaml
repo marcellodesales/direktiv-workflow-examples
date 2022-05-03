@@ -1,0 +1,88 @@
+# Event Input:
+# 
+# Can be any event with the com.direktiv.endpoint.*.failure or com.direktiv.vault.*.failure flows
+#
+# NOTE: for Service-now.com, the TOKEN needs to be added as a sercet in Direktiv
+description: Service-now.com incident creation for password rotation flow
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# master workflow. Example of the event is shown above in the description
+#
+start:
+  type: eventsXor
+  state: strip-fields
+  events: 
+    - type: com.direktiv.vault.lookup.failure
+    - type: com.direktiv.vault.generate.failure
+    - type: com.direktiv.vault.update.failure
+    - type: com.direktiv.endpoint.change.failure
+    - type: com.direktiv.endpoint.verify.failure
+
+#
+# Define the "request" knative-function to be used for all the Service-now.com 
+# queries and interaction
+#
+functions:
+- id: request
+  type: knative-namespace
+  service: request
+
+states:
+- id: strip-fields
+  type: noop
+  transform: jq(.[] | .data)
+  transition: lookup-snc-address
+#
+# First state looks up the "address" variable stored in the Direktiv instance. The variable example
+# is shown below:
+#
+# { 
+#     "snc": "https://dev80617.service-now.com", <----- this is the Service-now.com UL
+# }
+#
+- id: lookup-snc-address
+  type: getter
+  variables:
+    - key: sncaddress
+      scope: namespace
+  transition: create-incident
+
+- id: create-incident
+  type: action
+  log: jq(.)
+  action:
+    function: request
+    secrets: ["SNC_USER", "SNC_PASSWORD"]
+    input:
+      method: "POST"
+      url: 'jq(.var.sncaddress.snc)/api/now/table/incident' #"https://instance.servicenow.com/api/sn_ind_tsm_sdwan/troubleticket/case"
+      body:
+        # description: jq(.)
+        description: |
+          jq(.data) 
+          jq(.return)
+        short_description: 'Password rotation failure for jq(.data.ip)'
+        severity: 1
+        urgency: 1
+        impact: 1
+      username: jq(.secrets.SNC_USER)
+      password: jq(.secrets.SNC_PASSWORD)
+      headers:
+        "Accept": "application/json"
+        "Content-Type": "application/json"
+    retries:
+      max_attempts: 3
+      delay: PT30S
+      multiplier: 2.0
+      codes: [".*"]
+  catch:
+    - error: "*"
+      transition: exception-catch
+
+#
+# Handle any failed connections
+#
+- id: exception-catch
+  type: noop
+  log: jq(.)
