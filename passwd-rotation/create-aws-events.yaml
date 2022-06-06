@@ -104,7 +104,7 @@ states:
 
 - id: delay-3
   type: delay
-  duration: PT10S
+  duration: PT5S
   transition: event-generate-i-0bb991e0193095687
 
 - id: event-generate-i-0bb991e0193095687
