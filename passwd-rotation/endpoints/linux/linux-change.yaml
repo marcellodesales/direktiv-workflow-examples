@@ -100,11 +100,11 @@ states:
   # log: generating success event for ssh password change jq(.)
   log: jq(.)
   event: 
-    type: com.direktiv.endpoint.verify.request
+    type: com.direktiv.endpoint.change.complete
     source: endpoints/linux
     data: jq(.)
     context:
-      ipaddress: jq(.ip)
+      ip: jq(.ip)
       vault: jq(.vault)
-      endpoint: jq(.type)
+      endpoint: jq(.endpoint)
 

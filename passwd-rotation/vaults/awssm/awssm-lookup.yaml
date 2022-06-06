@@ -1,24 +1,24 @@
 # Event Input:
 #  {
-#   "com.direktiv.vault.lookup.request": {
+#   "com.direktiv.awssm.lookup.request": {
 #     "data": {
 #       "ip": "3.26.24.101",
 #       "type": "linux",
 #       "user": "wwonigkeit",
-#       "vault": "hashicorp"
+#       "vault": "awssm"
 #     },
 #     "datacontenttype": "application/json",
 #     "id": "2636c282-2adb-48b1-aafc-d6de7b717546",
 #     "ip": "3.26.24.101",
 #     "source": "rotate-passwords",
 #     "specversion": "1.0",
-#     "type": "com.direktiv.vault.lookup.request",
-#     "vault": "hashicorp"
+#     "type": "com.direktiv.awssm.lookup.request",
+#     "vault": "awssm"
 #   }
 # }
 #
-# NOTE: for HashiCorp Vault, the TOKEN needs to be added as a sercet in Direktiv
-description: HashiCorp Vault lookup service
+# NOTE: for AWS Secrets Manager, the AWS_SECRET & AWS_KEY needs to be added as sercets in Direktiv
+description: AWS Secrets Manager lookup service
 
 #
 # The start definition which starts the worklfow based on the event received from the
@@ -26,25 +26,25 @@ description: HashiCorp Vault lookup service
 #
 start:
   type: event
-  state: lookup-vault-address
+  state: lookup-aws-secret
   event: 
-    type: com.direktiv.vault.lookup.request
+    type: com.direktiv.awssm.lookup.request
     context:
-      vault: "hashicorp"
+      vault: "awssm"
 
 #
-# Define the "request" knative-function to be used for all the HashiCorp Vault 
+# Define the "run-aws-command" knative-function to be used for all the AWS Secrets Manager 
 # queries and interaction
 #
 functions:
-- id: get-request
-  type: knative-namespace
-  service: request
+- id: run-aws-command
+  image: direktiv/awsgo
+  type: knative-workflow
 
 states:
 #
-# First state looks up the "hashicaddress" variable stored in the Direktiv instance. The variable example
-# is shown below:
+# First state looks up the secret from the AWS Secrets Manager service. The secrets stored 
+# as shown below:
 #
 # { 
 #     "vault": "http://13.239.47.38:8200", <----- this is the Vault URL

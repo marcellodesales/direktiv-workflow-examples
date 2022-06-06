@@ -1,5 +1,5 @@
 # {
-#   "com.direktiv.endpoint.run": {
+#   "com.direktiv.endpoint.verify.request": {
 #     "data": {
 #       "ip": "13.239.47.38",
 #       "newpass": "ZIO4ZJIE94McJ9khTjT9G5}Qc4V_1Y6Iob2*",
@@ -97,10 +97,10 @@ states:
   # log: generating success event for ssh password change jq(.)
   log: jq(.)
   event: 
-    type: com.direktiv.vault.update.request
+    type: com.direktiv.endpoint.verify.complete
     source: endpoints/linux
     data: jq(.)
     context:
-      ipaddress: jq(.ip)
+      ip: jq(.ip)
       vault: jq(.vault)
-      endpoint: jq(.type)
+      endpoint: jq(.endpoint)

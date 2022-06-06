@@ -1,0 +1,156 @@
+# Event Input:
+# {
+#   "com.direktiv.awssm.create.request": {
+#     "data": {
+#       "ip": "3.26.24.101",
+#       "newpass": "E8947R9398LM0vH1",
+#       "oldpass": {
+#         "wwonigkeit": "password"
+#       },
+#       "type": "linux",
+#       "user": "wwonigkeit",
+#       "vault": "awssm"
+#     },
+#     "datacontenttype": "application/json",
+#     "endpoint": "linux",
+#     "id": "8850c81e-1db4-4ecd-8734-dbb86380536a",
+#     "ipaddress": "3.26.24.101",
+#     "source": "endpoints/linux",
+#     "specversion": "1.0",
+#     "type": "com.direktiv.awssm.update.request",
+#     "vault": "awssm"
+#   }
+# }
+#
+# NOTE: for AWS Secrets Manager, the AWS_SECRET & AWS_KEY needs to be added as sercets in Direktiv
+description: AWS Secrets Manager create secret service
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# previous workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: create-awssm-secret
+  event: 
+    type: com.direktiv.awssm.create.request
+    context:
+      vault: "awssm"
+
+#
+# Define the "run-aws-command" knative-function to be used for all the AWS Secrets Manager 
+# queries and interaction
+#
+functions:
+- id: run-aws-command
+  image: direktiv/awsgo
+  type: knative-workflow
+
+states:
+#
+# First state looks up the "hashicaddress" variable stored in the Direktiv instance. The variable example
+# is shown below:
+#
+# create-secret
+# --name <ip>
+# --secret-string "{\"root\":\"password\",\"wwonigkeit\":\"password\"}"
+# }
+#
+- id: create-awssm-secret
+  type: action
+  log: Creating a new secret for machine jq(."com.direktiv.awssm.create.request".ip) instance-id
+  action:
+    function: run-aws-command
+    secrets: ["AWS_KEY","AWS_SECRET"]
+    input:
+      access-key: jq(.secrets.AWS_KEY)
+      access-secret: jq(.secrets.AWS_SECRET)
+      command: jq(["aws", "secretsmanager", "create-secret", "--name", jq(."com.direktiv.awssm.create.request".ip), "--secret-string", '{ jq(."com.direktiv.awssm.create.request".ip)')
+  transform: jq(.return.Reservations[0].Instances[0] | del(."EC2 Instance State-change Notification"))
+  #transition: store-aws-info
+  transition: lookup-info
+
+#
+# Next state create the user with the new password in the location in Vault specified in the "hashicaddress" variable returned
+# by the initial "getter" state (state 1)
+#
+#
+- id: create-password
+  type: action
+  #log: jq(.)
+  action:
+    function: get-request
+    secrets: ["VAULT_TOKEN"]
+    input:
+      method: "POST"
+      url: 'jq(.var.hashicaddress.vault)/v1/jq(.var.hashicaddress.store)/data/jq(."com.direktiv.vault.create.request".data.ip)'
+      headers:
+        "X-Vault-Token": jq(.secrets.VAULT_TOKEN)
+        "Content-Type": "application/merge-patch+json"
+      body:
+        data:
+          'jq(."com.direktiv.vault.create.request".data.user as $username | { ($username): ."com.direktiv.vault.create.request".data.newpass })'
+    retries:
+      max_attempts: 3
+      delay: PT60S
+      multiplier: 2.0
+      codes: [".*"]
+  catch:
+    - error: "*"
+      transition: failed-connection
+  transition: check-response-create
+
+#
+# Make sure we received a valid response
+#
+- id: check-response-create
+  type: switch
+  log: jq(.)
+  conditions:
+    - condition: 'jq(.return."status-code" != 200)'
+      transition: failed-request
+  defaultTransition: create-complete
+  defaultTransform: jq(.ip = ."com.direktiv.vault.create.request".data.ip | .endpoint = ."com.direktiv.vault.create.request".data.endpoint | .user = ."com.direktiv.vault.create.request".data.user | .vault = ."com.direktiv.vault.create.request".data.vault | .oldpass = ."com.direktiv.vault.create.request".data.oldpass | .newpass = ."com.direktiv.vault.create.request".data.newpass| del (.return) | del (."com.direktiv.vault.create.request") | del (.var))
+
+#
+# Handle any failed connections
+#
+- id: failed-connection
+  type: generateEvent
+  log: Connection to HashiCorp Vault failed - jq(.error)
+  event: 
+    type: com.direktiv.vault.create.failure
+    source: vaults/hashicorp-vault
+    data: jq(.error)
+    context:
+      vault: jq(.var.hashicaddress.vault)
+      msg: jq(.error)
+      error: connection
+
+#
+# Handle any failed API calls
+#
+- id: failed-request
+  type: generateEvent
+  log: API call failed with error code - jq(.return.status), jq(.return.body.errors)
+  event: 
+    type: com.direktiv.vault.create.failure
+    source: vaults/hashicorp-vault
+    data: jq(.return = .return | .data = ."com.direktiv.vault.create.request".data | .vault = .var.address.vault | del (."com.direktiv.vault.create.request") | del (.oldpass) | del (.var))
+    context:
+      vault: jq(.var.hashicaddress.vault)
+      error: request
+
+# Next state will generate a change passwordf event to the specific endpoint. The context is 
+# based on the selection in the previous state
+#
+- id: create-complete
+  type: generateEvent
+  log: jq(.)
+  event:
+    type: com.direktiv.vault.create.complete
+    source: vaults/hashicorp-vault
+    data: jq(.)
+    context:
+      ip: jq(.ip)
+      vault: jq(.vault)

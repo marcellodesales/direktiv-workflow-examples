@@ -1,0 +1,279 @@
+#
+# To ensure we can store multiple AWS keys, the following variables need to be created (remember to add liine breaks to the certiifcate):
+# "awskeys": {
+#    { "key1": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAgZX06dU9D5JWd1yCqvbDsRXEsR478M7XaaJAAYLtTmMemp+j\n-----END RSA PRIVATE KEY-----"  },
+#    { "key2": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAgZX06dU9D5JWd1yCqvbDsRXEsR478M7XaaJAAYLtTmMemp+j\n-----END RSA PRIVATE KEY-----"  }
+# }
+# 
+#
+description: A workflow which will start based on an AWS event being received. It will check for the username, and create it if necessary, set the password based on a password being retrieved from the password storage and update the keystore (after validation)
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# vault workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: check-event
+  event: 
+    type: "EC2 Instance State-change Notification"
+
+#
+# Use the SSH/SCP direktiv-app container to make the connnection to the type: linux
+# devices. This is a generic container which executes SSH or SCP commands / scripts
+# and can be used for anything else SSH
+#
+functions:
+  - id: ssh
+    image: direktiv/sshscp
+    type: knative-workflow
+  - id: get-aws-instance
+    image: direktiv/awsgo
+    type: knative-workflow
+
+states:
+#
+# We need to check that the event is a "running" event. If it is, we will need to get the AWS instance id for the
+# machine to get the public IP address
+#
+- id: check-event
+  log: Event received - jq(.)
+  type: switch
+  defaultTransition: event-filter-failed
+  conditions:
+  - condition: jq(."EC2 Instance State-change Notification".data.detail.state == "running")
+    transition: get-instance-details
+
+#
+# Confirmed that the machine is in running state, now we need to get the public IP address and ensure the key we have 
+# matches the key stored for the AWS machines
+#
+- id: get-instance-details
+  type: action
+  log: Getting machine details for jq(."EC2 Instance State-change Notification".data.detail."instance-id") instance-id
+  action:
+    function: get-aws-instance
+    secrets: ["AWS_KEY","AWS_SECRET"]
+    input:
+      access-key: jq(.secrets.AWS_KEY)
+      access-secret: jq(.secrets.AWS_SECRET)
+      region: jq(."EC2 Instance State-change Notification".data.region)
+      command: jq(["ec2", "describe-instances", "--instance-ids", ."EC2 Instance State-change Notification".data.detail."instance-id"])
+  transform: jq(.return.Reservations[0].Instances[0] | del(."EC2 Instance State-change Notification"))
+  #transition: store-aws-info
+  transition: lookup-info
+
+#
+# State looks up information for the user to be configured & the vault to use:
+#
+# { 
+#     "vault": "hashicorp", <----- this is the Vault type
+#     "username": "wwonigkeit" <----- this is the user to configure on the machines
+#     "endpoint": "linux" <----- type of device to configure
+# }
+#
+- id: lookup-info
+  type: getter
+  variables:
+    - key: configoptions
+      scope: namespace
+    - key: awskeys
+      scope: namespace      
+  transition: event-generate
+
+#
+# Generate an event notifying the vault that we would like to have a password generated
+#
+- id: event-generate
+  type: generateEvent
+  log: Generating an event to create a new password in the Vault
+  event: 
+    type: com.direktiv.vault.generate.request
+    source: clouds/aws/provision-users
+    data:
+      ip: jq(.PublicIpAddress)
+      oldpass:
+        'jq(.var.configoptions.username as $username | { ($username): "password" })'
+      endpoint: jq(.var.configoptions.endpoint)
+      user: jq(.var.configoptions.username)
+      vault: jq(.var.configoptions.vault)
+    context:
+      ip: jq(.PublicIpAddress)
+      vault: jq(.var.configoptions.vault)
+      endpoint: jq(.var.configoptions.endpoint)
+  transition: wait-for-generate
+
+#
+# This state now waits for the return event from any of the subflows calling the vaults
+# to generate a new passwords from the vault
+#
+- id: wait-for-generate
+  type: eventXor
+  timeout: PT60S
+  events:
+    - transition: check-configure-user
+      event:
+        type: com.direktiv.vault.generate.complete
+        context:
+          vault: jq(.var.configoptions.vault)
+          ip: jq(.PublicIpAddress)        
+      #transform: jq(. = ."com.direktiv.vault.generate.complete".data)
+    - transition: workflow-failure
+      event:
+        type: com.direktiv.vault.generate.failure
+
+#
+# Login to the Linux / UNIX server and run the command passed from the event.
+# The command is generated from the master workflow. This ensures that this workflow stays
+# very generic and can be used to execute any command (including the validation step)
+#
+- id: check-configure-user
+  log: initiating ssh connection and password change to jq(.PublicDnsName) and checking whether the user has been configured
+  type: action
+  action:
+    function: ssh
+    input: 
+      actions:
+      - type: ssh
+        host: ec2-user@jq(.PublicDnsName)
+        auth: jq(.KeyName).pem
+        output: "/tmp/out"  # reading /tmp/out at the end
+        files:
+        - name: jq(.KeyName).pem
+          type: plain
+          data: 'jq(.KeyName as $keyname |  .var.awskeys.[$keyname])'
+        - name: check-and-create-user.sh
+          type: plain
+          data: |
+            #!/bin/bash
+
+            # Add the user using the adduser command
+            sudo adduser jq(.var.configoptions.username)
+            
+            # Check if the user previously existed or not?
+            if [ $? -eq 0 ]; then
+              # Add the user to the sudoers
+              sudo sh -c 'echo "jq(.var.configoptions.username)  ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/direktiv-provisioned'
+              # Change the password to a standard password
+              sudo sh -c 'echo jq(."com.direktiv.vault.generate.complete".data.newpass) | passwd --stdin jq(."com.direktiv.vault.generate.complete".data.user)'
+
+              # Now we're going to enable SSH access using password authentication
+              sudo sh -c 'file=/etc/ssh/sshd_config && cp -p $file $file.old &&  while read key other; do case $key in PasswordAuthentication) other=yes;; esac; echo "$key $other"; done < $file.old > $file'
+              sudo sh -c 'sudo service sshd restart'
+              exit 0
+            else
+              exit 1
+            fi            
+  transition: event-verify
+  transform: jq(. = ."com.direktiv.vault.generate.complete".data)
+  catch:
+  - error: "*"
+    transition: generate-failure
+
+#
+# This state will send an event which contains the input to a workflow which will verify the password for the
+# specified user on the device.
+# example:
+#       -> endpoints\linux\linux-verify
+#
+- id: event-verify
+  type: generateEvent
+  event:
+    type: com.direktiv.endpoint.verify.request
+    source: clouds/aws/provision-users
+    data: jq(.)
+    context:
+      vault: jq(.vault)
+      ip: jq(.ip)
+      endpoint: jq(.endpoint)
+  transition: wait-for-verify
+
+#
+# This state now waits for the return event from any of the subflows calling the endpoint workflow
+# to verify the new password on the endpoint
+#
+- id: wait-for-verify
+  type: eventXor
+  timeout: PT60S
+  events:
+    - transition: event-create
+      event:
+        type: com.direktiv.endpoint.verify.complete
+        context:
+          vault: jq(.vault)
+          ip: jq(.ip)         
+      transform: jq(. = ."com.direktiv.endpoint.verify.complete".data)
+    - transition: workflow-failure
+      event:
+        type: com.direktiv.endpoint.verify.failure
+
+#
+# This state will send an event which contains the input to a workflow which will create the new password
+# based on the type of vault being used and the specific IP address of the device.
+# example:
+#       -> vaults\hashicorp\hashicorp-create
+#
+- id: event-create
+  type: generateEvent
+  event:
+    type: com.direktiv.vault.create.request
+    source: clouds/aws/provision-users
+    data: jq(.)
+    context:
+      vault: jq(.vault)
+      ip: jq(.ip)
+  transition: wait-for-create
+
+#
+# This state now waits for the return event from any of the subflows calling the vaults
+# to create new passwords to the vault
+#
+- id: wait-for-create
+  type: eventXor
+  timeout: PT60S
+  events:
+    - transition: workflow-complete
+      event:
+        type: com.direktiv.vault.create.complete
+        context:
+          vault: jq(.vault)
+          ip: jq(.ip)        
+      transform: jq(. = ."com.direktiv.vault.create.complete".data)
+    - transition: workflow-failure
+      event:
+        type: com.direktiv.vault.create.failure
+
+#
+# Handle the failure event from the update
+#
+- id: workflow-failure
+  type: noop
+  log: 'Failure occured jq(.)'
+
+#
+# Handle the failure event from the update
+#
+- id: workflow-complete
+  type: noop
+  log: 'Workflow completed with jq(.)'
+
+#
+#
+# Log the error for the password change
+- id: generate-failure
+  type: generateEvent
+  log: Generating failure event for adding user on AWS EC2 Linux jq(.)
+  event:
+    type: com.direktiv.cloud.aws.failure
+    source: clouds/aws
+    data: jq(.error)
+    context:
+      ipaddress: jq(.var.awsinfo.InstanceId)
+      msg: jq(.error.msg)
+
+#
+# End the workflow because the event received cannot be used
+#
+- id: event-filter-failed
+  type: noop
+  log: 'Event received was of type jq(."EC2 Instance State-change Notification".data.detail.state) for AWS instance jq("EC2 Instance State-change Notification".data.detail."instance-id"))'

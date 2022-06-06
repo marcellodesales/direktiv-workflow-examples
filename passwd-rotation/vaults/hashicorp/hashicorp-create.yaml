@@ -1,11 +1,10 @@
 # Event Input:
 # {
-#   "com.direktiv.vault.update.request": {
+#   "com.direktiv.vault.create.request": {
 #     "data": {
 #       "ip": "3.26.24.101",
 #       "newpass": "E8947R9398LM0vH1",
 #       "oldpass": {
-#         "root": "password",
 #         "wwonigkeit": "password"
 #       },
 #       "type": "linux",
@@ -24,7 +23,7 @@
 # }
 #
 # NOTE: for HashiCorp Vault, the TOKEN needs to be added as a sercet in Direktiv
-description: HashiCorp Vault update password service
+description: HashiCorp Vault create password service
 
 #
 # The start definition which starts the worklfow based on the event received from the
@@ -34,7 +33,7 @@ start:
   type: event
   state: lookup-vault-address
   event: 
-    type: com.direktiv.vault.update.request
+    type: com.direktiv.vault.create.request
     context:
       vault: "hashicorp"
 
@@ -63,28 +62,28 @@ states:
   variables:
     - key: hashicaddress
       scope: namespace
-  transition: update-password
+  transition: create-password
 
 #
-# Next state update the user with the new password from the location in Vault specified in the "hashicaddress" variable returned
+# Next state create the user with the new password in the location in Vault specified in the "hashicaddress" variable returned
 # by the initial "getter" state (state 1)
 #
 #
-- id: update-password
+- id: create-password
   type: action
   #log: jq(.)
   action:
     function: get-request
     secrets: ["VAULT_TOKEN"]
     input:
-      method: "PATCH"
-      url: 'jq(.var.hashicaddress.vault)/v1/jq(.var.hashicaddress.store)/data/jq(."com.direktiv.vault.update.request".data.ip)'
+      method: "POST"
+      url: 'jq(.var.hashicaddress.vault)/v1/jq(.var.hashicaddress.store)/data/jq(."com.direktiv.vault.create.request".data.ip)'
       headers:
         "X-Vault-Token": jq(.secrets.VAULT_TOKEN)
         "Content-Type": "application/merge-patch+json"
       body:
         data:
-          'jq(."com.direktiv.vault.update.request".data.user as $username | { ($username): ."com.direktiv.vault.update.request".data.newpass })'
+          'jq(."com.direktiv.vault.create.request".data.user as $username | { ($username): ."com.direktiv.vault.create.request".data.newpass })'
     retries:
       max_attempts: 3
       delay: PT60S
@@ -93,19 +92,19 @@ states:
   catch:
     - error: "*"
       transition: failed-connection
-  transition: check-response-update
+  transition: check-response-create
 
 #
 # Make sure we received a valid response
 #
-- id: check-response-update
+- id: check-response-create
   type: switch
-  # log: jq(.)
+  log: jq(.)
   conditions:
     - condition: 'jq(.return."status-code" != 200)'
       transition: failed-request
-  defaultTransition: update-complete
-  defaultTransform: jq(.ip = ."com.direktiv.vault.update.request".data.ip | .endpoint = ."com.direktiv.vault.update.request".data.endpoint | .user = ."com.direktiv.vault.update.request".data.user | .vault = ."com.direktiv.vault.update.request".data.vault | .oldpass = .oldpass | del (.return) | del (."com.direktiv.vault.update.request") | del (.var))
+  defaultTransition: create-complete
+  defaultTransform: jq(.ip = ."com.direktiv.vault.create.request".data.ip | .endpoint = ."com.direktiv.vault.create.request".data.endpoint | .user = ."com.direktiv.vault.create.request".data.user | .vault = ."com.direktiv.vault.create.request".data.vault | .oldpass = ."com.direktiv.vault.create.request".data.oldpass | .newpass = ."com.direktiv.vault.create.request".data.newpass| del (.return) | del (."com.direktiv.vault.create.request") | del (.var))
 
 #
 # Handle any failed connections
@@ -114,7 +113,7 @@ states:
   type: generateEvent
   log: Connection to HashiCorp Vault failed - jq(.error)
   event: 
-    type: com.direktiv.vault.update.failure
+    type: com.direktiv.vault.create.failure
     source: vaults/hashicorp-vault
     data: jq(.error)
     context:
@@ -129,9 +128,9 @@ states:
   type: generateEvent
   log: API call failed with error code - jq(.return.status), jq(.return.body.errors)
   event: 
-    type: com.direktiv.vault.update.failure
+    type: com.direktiv.vault.create.failure
     source: vaults/hashicorp-vault
-    data: jq(.return = .return | .data = ."com.direktiv.vault.update.request".data | .vault = .var.address.vault | del (."com.direktiv.vault.update.request") | del (.oldpass) | del (.var))
+    data: jq(.return = .return | .data = ."com.direktiv.vault.create.request".data | .vault = .var.address.vault | del (."com.direktiv.vault.create.request") | del (.oldpass) | del (.var))
     context:
       vault: jq(.var.hashicaddress.vault)
       error: request
@@ -139,11 +138,11 @@ states:
 # Next state will generate a change passwordf event to the specific endpoint. The context is 
 # based on the selection in the previous state
 #
-- id: update-complete
+- id: create-complete
   type: generateEvent
   log: jq(.)
   event:
-    type: com.direktiv.vault.update.complete
+    type: com.direktiv.vault.create.complete
     source: vaults/hashicorp-vault
     data: jq(.)
     context:

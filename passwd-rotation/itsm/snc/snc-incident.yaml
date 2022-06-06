@@ -16,8 +16,10 @@ start:
     - type: com.direktiv.vault.lookup.failure
     - type: com.direktiv.vault.generate.failure
     - type: com.direktiv.vault.update.failure
+    - type: com.direktiv.vault.create.failure
     - type: com.direktiv.endpoint.change.failure
     - type: com.direktiv.endpoint.verify.failure
+    - type: com.direktiv.cloud.aws.failure
 
 #
 # Define the "request" knative-function to be used for all the Service-now.com 

@@ -82,7 +82,7 @@ states:
         symbols: 0
     retries:
       max_attempts: 3
-      delay: PT30S
+      delay: PT60S
       multiplier: 2.0
       codes: [".*"]
   catch:
@@ -100,7 +100,7 @@ states:
     - condition: 'jq(.return."status-code" != 200)'
       transition: failed-request
   defaultTransition: generate-complete
-  defaultTransform: jq(.ip = ."com.direktiv.vault.generate.request".data.ip | .oldpass = ."com.direktiv.vault.generate.request".data.oldpass | .user = ."com.direktiv.vault.generate.request".data.user | .vault = ."com.direktiv.vault.generate.request".data.vault | .type = ."com.direktiv.vault.generate.request".data.type | .newpass = .return.body.data.value | del (.return) | del (.var) | del (."com.direktiv.vault.generate.request"))
+  defaultTransform: jq(.ip = ."com.direktiv.vault.generate.request".data.ip | .oldpass = ."com.direktiv.vault.generate.request".data.oldpass | .user = ."com.direktiv.vault.generate.request".data.user | .vault = ."com.direktiv.vault.generate.request".data.vault | .endpoint = ."com.direktiv.vault.generate.request".data.endpoint | .newpass = .return.body.data.value | del (.return) | del (.var) | del (."com.direktiv.vault.generate.request"))
 
 #
 # Handle any failed connections
@@ -138,10 +138,10 @@ states:
   type: generateEvent
   log: jq(.)
   event:
-    type: com.direktiv.endpoint.change.request
+    type: com.direktiv.vault.generate.complete
     source: vaults/hashicorp-vault
     data: jq(.)
     context:
-      endpoint: jq(.type)
+      endpoint: jq(.endpoint)
       vault: jq(.vault)
       ip: jq(.ip)      

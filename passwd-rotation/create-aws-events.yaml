@@ -1,0 +1,154 @@
+#
+# Workflow to create a couple of CloudEvents to simulate startups of machines
+#
+# Sample event:
+# {
+#   "specversion": "1.0",
+#   "id": "ca08a1db-e77a-2468-6c93-f97c3d07e0a9",
+#   "source": "aws.ec2",
+#   "type": "EC2 Instance State-change Notification",
+#   "subject": "aws.ec2",
+#   "time": "2022-05-04T16:47:07Z",
+#   "data": {
+#     "version": "0",
+#     "id": "ca08a1db-e77a-2468-6c93-f97c3d07e0a9",
+#     "detail-type": "EC2 Instance State-change Notification",
+#     "source": "aws.ec2",
+#     "account": "338328518639",
+#     "time": "2022-05-04T16:47:07Z",
+#     "region": "ap-southeast-2",
+#     "resources": [
+#       "arn:aws:ec2:ap-southeast-2:338328518639:instance/i-0486abe90000c530c"
+#     ],
+#     "detail": {
+#       "instance-id": "i-0486abe90000c530c",
+#       "state": "running"
+#     }
+#   }
+# }
+description: A workflow which will start based on an AWS event being received. It will check for the username, and create it if necessary, set the password based on a password being retrieved from the password storage and update the keystore (after validation)
+
+states:
+- id: event-generate-i-0486abe90000c530c
+  type: generateEvent
+  event: 
+    type: "EC2 Instance State-change Notification"
+    source: "aws.ec2"
+    data:
+      region: "ap-southeast-2"
+      account: "338328518639"
+      detail-type: "EC2 Instance State-change Notification"
+      id: "ca08a1db-e77a-2468-6c93-f97c3d07e0a9"
+      source: "aws.ec2"
+      resources: ["arn:aws:ec2:ap-southeast-2:338328518639:instance/i-0486abe90000c530c"]
+      detail:
+        instance-id: "i-0486abe90000c530c"
+        state: "running"
+    context:
+      id: "ca08a1db-e77a-2468-6c93-f97c3d07e0a9"
+      source: "aws.ec2"
+      subject: "aws.ec2"
+  transition: delay-1
+
+- id: delay-1
+  type: delay
+  duration: PT20S
+  transition: event-generate-i-0cf5a83f321fbed55
+
+- id: event-generate-i-0cf5a83f321fbed55
+  type: generateEvent
+  event: 
+    type: "EC2 Instance State-change Notification"
+    source: "aws.ec2"
+    data:
+      region: "ap-southeast-2"
+      account: "338328518639"
+      detail-type: "EC2 Instance State-change Notification"
+      id: "4bb23010-1612-1492-17c3-7676c7ca0fca"
+      source: "aws.ec2"
+      resources: ["arn:aws:ec2:ap-southeast-2:338328518639:instance/i-0cf5a83f321fbed55"]
+      detail:
+        instance-id: "i-0cf5a83f321fbed55"
+        state: "running"
+    context:
+      id: "4bb23010-1612-1492-17c3-7676c7ca0fca"
+      source: "aws.ec2"
+      subject: "aws.ec2"
+  transition: delay-2
+
+- id: delay-2
+  type: delay
+  duration: PT10S
+  transition: event-generate-i-0ef253d3f4e25c4d2
+
+- id: event-generate-i-0ef253d3f4e25c4d2
+  type: generateEvent
+  event: 
+    type: "EC2 Instance State-change Notification"
+    source: "aws.ec2"
+    data:
+      region: "ap-southeast-2"
+      account: "338328518639"
+      detail-type: "EC2 Instance State-change Notification"
+      id: "ef11b498-19c6-5793-bba8-2b53a78ac814"
+      source: "aws.ec2"
+      resources: ["arn:aws:ec2:ap-southeast-2:338328518639:instance/i-0ef253d3f4e25c4d2"]
+      detail:
+        instance-id: "i-0ef253d3f4e25c4d2"
+        state: "running"
+    context:
+      id: "ef11b498-19c6-5793-bba8-2b53a78ac814"
+      source: "aws.ec2"
+      subject: "aws.ec2"
+  transition: delay-3
+
+- id: delay-3
+  type: delay
+  duration: PT10S
+  transition: event-generate-i-0bb991e0193095687
+
+- id: event-generate-i-0bb991e0193095687
+  type: generateEvent
+  event: 
+    type: "EC2 Instance State-change Notification"
+    source: "aws.ec2"
+    data:
+      region: "ap-southeast-2"
+      account: "338328518639"
+      detail-type: "EC2 Instance State-change Notification"
+      id: "f5840569-fd95-adb9-deca-1a5fa6af0d6c"
+      source: "aws.ec2"
+      resources: ["arn:aws:ec2:ap-southeast-2:338328518639:instance/i-0bb991e0193095687"]
+      detail:
+        instance-id: "i-0bb991e0193095687"
+        state: "running"
+    context:
+      id: "f5840569-fd95-adb9-deca-1a5fa6af0d6c"
+      source: "aws.ec2"
+      subject: "aws.ec2"
+  transition: delay-4
+
+- id: delay-4
+  type: delay
+  duration: PT20S
+  transition: event-generate-i-0b6b01f7bc59b8823
+
+- id: event-generate-i-0b6b01f7bc59b8823
+  type: generateEvent
+  event: 
+    type: "EC2 Instance State-change Notification"
+    source: "aws.ec2"
+    data:
+      region: "ap-southeast-2"
+      account: "338328518639"
+      detail-type: "EC2 Instance State-change Notification"
+      id: "798a67eb-7013-109f-f40b-853c34e4cff5"
+      source: "aws.ec2"
+      resources: ["arn:aws:ec2:ap-southeast-2:338328518639:instance/i-0b6b01f7bc59b8823"]
+      detail:
+        instance-id: "i-0b6b01f7bc59b8823"
+        state: "running"
+    context:
+      id: "798a67eb-7013-109f-f40b-853c34e4cff5"
+      source: "aws.ec2"
+      subject: "aws.ec2"
