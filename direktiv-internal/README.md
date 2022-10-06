@@ -2,7 +2,7 @@
 
 The repository contains example workflows for Enterprise Edition internal Direktiv provisioning:
 - **[setup-master-workflow.yaml](https://github.com/wwonigkeit/provisioning-workflows#setup-master-workflowyaml):** master workflow with the inputs and event sequences
-- **[direktiv-user-setup/keycloak-create-user.yaml](https://github.com/wwonigkeit/provisioning-workflows#direktiv-user-setupkeycloak-create-useryaml):** workflow creates the suer and group from the master workflow input in Keycloak
+- **[direktiv-user-setup/keycloak-create-user.yaml](https://github.com/wwonigkeit/provisioning-workflows#direktiv-user-setupkeycloak-create-useryaml):** workflow creates the user and group from the master workflow input in Keycloak
 - **[direktiv-namespace-setup/create-namespace.yaml](https://github.com/wwonigkeit/provisioning-workflows#direktiv-namespace-setupcreate-namespaceyaml):** creates the namespace, and associates the Keycloak group name
 - **[direktiv-workflow-setup/clone-workflows.yaml](https://github.com/wwonigkeit/provisioning-workflows#direktiv-workflow-setupclone-workflowsyaml):** clone the example workflows into the newly created namespace
 
