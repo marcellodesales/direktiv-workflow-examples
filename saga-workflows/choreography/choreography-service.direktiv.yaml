@@ -1,0 +1,32 @@
+# Example request:
+#
+#{
+#  "orderid": "order-1"
+#  "units": 100,
+#  "total": 200,
+#  "zip": 12345
+#}
+description: Service to receive the order
+states:
+- id: generate-order
+  type: generateEvent
+  event:
+    type: com.stock.check
+    source: service/order
+    data: jq(.)
+  transition: wait
+- id: wait
+  type: eventXor
+  timeout: PT10S
+  events:
+    - transition: success
+      event:
+        type: com.delivery.success
+    - transition: failed
+      event:
+        type: com.stock.failure
+- id: failed
+  type: noop
+- id: success
+  type: noop
+

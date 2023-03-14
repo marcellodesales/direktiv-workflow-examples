@@ -1,0 +1,88 @@
+description: A simple ordering orchestrated microservice
+functions:
+  - id: stock
+    image: gerke74/stock:v0.0.1
+    type: reusable
+  - id: payment
+    image: gerke74/payment:v0.0.1
+    type: reusable
+  - id: delivery
+    image: gerke74/delivery:v0.0.1
+    type: reusable
+states:
+  # Check the stock level based on the input
+  - id: stock
+    log: 'jq(.)'
+    type: action
+    action:
+      function: stock
+      input: 
+        id: jq(.orderid)
+        units: jq(.units)
+        action: "check"
+    # No stock available - notify
+    catch:
+    - error: "*"
+      transition: done
+    # Stock checkout successful - transition to payment
+    transition: payment
+
+  # Process the payment for the order
+  - id: payment
+    log: 'jq(.)'
+    type: action
+    action:
+      function: payment
+      input: 
+        id: jq(.orderid)
+        total: jq(.total)
+        action: "process"
+    # Error in the payment - undo the stock checkout
+    catch:
+    - error: "*"
+      transition: undo-stock
+    # Payment successful - transition to delivery
+    transition: delivery
+
+  # Process the delivery for the order
+  - id: delivery
+    type: action
+    action:
+      function: delivery
+      input: 
+        id: jq(.orderid)
+        zip: jq(.zip)
+        action: "send"
+    # Delivery successful - notify the originator
+    transition: done
+    # Error in the delivery - undo the payment
+    catch:
+    - error: "*"
+      transition: undo-payment
+  
+  # Notify of success or failure
+  - id: done
+    type: noop
+    log: 'order id jq(.orderid) jq(if .error then "failed" else "suceeded" end)'
+ 
+  # Undo the payment
+  - id: undo-payment
+    type: action
+    action:
+      function: payment
+      input: 
+        id: jq(.orderid)
+        action: "cancel"
+    # Undo the payment completed, undo stock checkout
+    transition: undo-stock
+
+  # Undo the stock chckout
+  - id: undo-stock
+    type: action
+    action:
+      function: stock
+      input: 
+        id: jq(.orderid)
+        action: "cancel"
+    # Undo the stock checkout completed, notify of failure
+    transition: done

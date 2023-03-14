@@ -1,0 +1,245 @@
+#
+# NOTE: The workflow sets up testing parameters for the servicenow workflow example
+# Can be an event driven workflow or a subflow invoked workflow. The workflow requires the following input:
+#     Servicenow.com URL: Servicenow.com URL in format https://dev80617.service-now.com
+#     Servicenow.com Username: Servicenow.com username for basic authentication
+#     Servicenow.com Password: Servicenow.com password for basic authentication
+#     Action: Can be any of the following:
+#       - list: Retrieves a list of all records from the "incident"/"change" table.
+#       - get: Retrieves a specified record from the "incident"/"change" table.
+#       - update: Updates a specified record in  the "incident"/"change" table.
+#       - create: Creates a record in the "incident"/"change" table.
+#       - delete: Deletes a record in the "incident"/"change" table.
+#  
+
+description: Service-now.com incident & change management testing workflow (using events)
+
+states:
+# Validate the input to the workflow. Only the absolutes are validated.
+- id: validate
+  type: validate
+  schema:
+    title: "Validate the input to the incident creation workflow"
+    type: object
+    required: ["sncurl", "sncusername","sncpassword","action"]
+    properties:
+      sncurl:
+        title: "Servicenow.com URL in format https://dev80617.service-now.com"
+        type: string
+        default: "https://dev138642.service-now.com/"
+      sncusername:
+        title: "Servicenow.com username for basic authentication"
+        type: string
+        default: "admin"
+      sncpassword:
+        title: "Servicenow.com password for basic authentication"
+        type: string
+        default: "d+iti9^W6BEP"
+      workflow:
+        title: "The workflow to test"
+        type: string
+        enum: ["incident", "change"]
+        default: "incident"
+      action:
+        title: "Action can be list, get, update or create"
+        type: string
+        enum: ["list", "get", "create", "update", "delete"]
+        default: "list"
+      incident_sys_id:
+        title: "Incident sys_id to get details for"
+        type: string
+        default: "57af7aec73d423002728660c4cf6a71c"
+      change_sys_id:
+        title: "Change request sys_id to get details for"
+        type: string
+        default: "c83c5e5347c12200e0ef563dbb9a7190"
+      description:
+        title: "Long description for the incident/change creation or update"
+        type: string
+        default: "Long description for the incident/change creation or update"
+      impact:
+        title: "Impact for the incident/change creation or update"
+        type: number
+        default: 3
+      severity:
+        title: "Severity ranging from 1 - High to 3 - Low"
+        type: number
+        default: 3
+      short_description:
+        title: "Short description for the incident/change creation or update"
+        type: string
+        default: "Short description for the incident/change creation or update"
+  transition: transition-action
+
+#
+# The first state is used to transition to the correct workflow defined by the "workflow" JSON input.
+# This is a simple switch state
+#
+- id: transition-action
+  type: switch
+  conditions:
+  - condition: jq(.action == "list" and .workflow == "incident")
+    transition: event-list-incident
+  - condition: jq(.action == "get" and .workflow == "incident")
+    transition: event-get-incident
+  - condition: jq(.action == "create" and .workflow == "incident")
+    transition: event-create-incident
+  - condition: jq(.action == "update" and .workflow == "incident")
+    transition: event-update-incident
+  - condition: jq(.action == "delete" and .workflow == "incident")
+    transition: event-delete-incident
+  - condition: jq(.action == "list" and .workflow == "change")
+    transition: event-list-change
+  - condition: jq(.action == "get" and .workflow == "change")
+    transition: event-get-change
+  - condition: jq(.action == "create" and .workflow == "change")
+    transition: event-create-change
+  - condition: jq(.action == "update" and .workflow == "change")
+    transition: event-update-change
+  - condition: jq(.action == "delete" and .workflow == "change")
+    transition: event-delete-change
+  defaultTransition: exception-catch
+
+#
+# Run the incident workflow tests (list all incidents)
+#
+- id: event-list-incident
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.incident.list
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the incident workflow tests (get incident details)
+#
+- id: event-get-incident
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.incident.get
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the incident workflow tests (create incident)
+#
+- id: event-create-incident
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.incident.create
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the incident workflow tests (update incident details)
+#
+- id: event-update-incident
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.incident.update
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the incident workflow tests (delete incident)
+#
+- id: event-delete-incident
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.incident.delete
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the change workflow tests (list all changes)
+#
+- id: event-list-change
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.change.list
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the change workflow tests (get change details)
+#
+- id: event-get-change
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.change.get
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the change workflow tests (create change)
+#
+- id: event-create-change
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.change.create
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the change workflow tests (update change details)
+#
+- id: event-update-change
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.change.update
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# Run the change workflow tests (delete change)
+#
+- id: event-delete-change
+  type: generateEvent
+  event: 
+    type: com.direktiv.snc.change.delete
+    source: itsm/snc/setup-testing
+    data: jq(.)
+  transition: wait-for-event
+
+#
+# This state now waits for the return event from any of the subflows calling the vaults
+# to create new passwords to the vault
+#
+- id:  wait-for-event
+  type: eventXor
+  timeout: PT60S
+  events:
+    - transition: print-results
+      event:
+        type: com.direktiv.snc.incident.response
+    - transition: print-results
+      event:
+        type: com.direktiv.snc.change.response        
+    - transition: exception-catch
+      event:
+        type: com.direktiv.snc.incident.error
+    - transition: exception-catch
+      event:
+        type: com.direktiv.snc.change.error
+#
+# Print the output fpor the test workflows
+#
+- id: print-results
+  type: noop
+  log: 'Output: jq(.)'
+
+#
+# Handle any failed connections
+#
+- id: exception-catch
+  type: noop
+  log: 'Error caught: jq(.)'

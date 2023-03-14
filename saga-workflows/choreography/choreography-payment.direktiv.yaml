@@ -1,0 +1,61 @@
+#{
+#  "specversion": "1.0",
+#  "id": "1",
+#  "type": "com.payment.process",
+#  "source": "/service/order",
+#  "total": 100,
+#  "order-id": "order123",
+#  "zip": 12345,
+#  "action": "process"
+#}
+description: payment service
+start:
+  type: eventsXor
+  state: payment-action
+  events: 
+    - type: com.payment.process
+    - type: com.delivery.failure
+functions:
+  - id: payment
+    service: payment
+    type: knative-namespace
+states:
+  - id: check-or-cancel
+    type: switch
+    conditions:
+      - condition: jq(."com.delivery.failure")
+        transition: generate-failure-event
+    defaultTransition: payment-action
+  - id: payment-action
+    type: action
+    log: jq(.)
+    action:
+      function: payment
+      input: 
+        total: 'jq(."com.payment.process".total)'
+        id: 'jq(."com.payment.process".orderid)'
+        action: 'jq(if ."com.payment.process" then "check" else "cancel" end)'
+    transition: generate-success-event
+    catch:
+    - error: "*"
+      transition: generate-failure-event
+  - id: generate-success-event
+    type: generateEvent
+    log: generating success event for request jq(."com.payment.process".orderid)
+    event: 
+      type: com.delivery.start
+      source: /services/payment
+      data: ""
+      context:
+        orderid: 'jq(."com.payment.process".orderid)'
+        zip: 'jq(."com.payment.process".zip)'
+  - id: generate-failure-event
+    type: generateEvent
+    log: generating failure event for request jq(."com.payment.process".orderid)
+    event: 
+      type: com.payment.failure
+      source: /services/payment
+      data: ""
+      context:
+        orderid: jq(."com.payment.process".orderid)
+

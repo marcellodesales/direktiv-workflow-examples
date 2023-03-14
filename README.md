@@ -7,3 +7,7 @@ If you want to add an example workflow to the repository, please note the follow
 - Variables: define any variables, their content (if not generated) and scope (instance, workflow, namespace)
 - Secrets: define any secrets needed to within the workflow
 - External links: define any external information specific to the workflow (as an example blog articles or manuals)
+- Any namespace level services that need to exist
+
+Here is a summary of workflows and their usage:
+

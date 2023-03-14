@@ -1,0 +1,142 @@
+# 
+# This is the workflow used to delete the AWS Volumes. The workflow only starts
+# when it receives the ServiceNow approval event
+#
+
+description: Workflow to delete the AWS volumes when approval is received
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# vault workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: strip-fields
+  event:
+    type: com.servicenow.direktiv.change.approved
+    context:
+      cloud: "aws"
+
+functions:
+  - id: aws-cli
+    image: gcr.io/direktiv/functions/aws-cli:1.0
+    type: knative-workflow
+  - id: run-change
+    type: subflow
+    workflow: servicenow-workflows/change/snc-change-subflow
+
+states:
+  #
+  # Strip all the unecessary information from the event received
+  #
+  - id: strip-fields
+    type: noop
+    transform: 'jq( { result: (."com.servicenow.direktiv.change.approved".source as $sncchange  | [."com.servicenow.direktiv.change.approved".data[] | select(.u_delete=="1")] ) } )'
+    transition: snapshot-aws-volumes
+  #
+  # Snapshot the volumes and tag the snapshots with the change details from Servicenow.com
+  #
+  - id: snapshot-aws-volumes
+    log: jq(.)
+    # log: "Creating snapshot for the volumes selected in ServiceNow"
+    type: foreach
+    array: 'jq( [ .result[] | select(.u_delete=="1") ] )'
+    action:
+      function: aws-cli
+      secrets: ["AWS_KEY","AWS_SECRET"]
+      input:
+        access-key: jq(.secrets.AWS_KEY)
+        secret-key: jq(.secrets.AWS_SECRET)
+        region: jq(.u_region)
+        commands:
+        - command: aws ec2 create-snapshot --volume-id jq(.u_volume_id) --description "Volume snapshot created based on change jq(.u_change_number)" --tag-specifications "ResourceType=snapshot,Tags=[{Key=costrecovery,Value=yes},{Key=approved,Value=jq(.u_change_number)}]"
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transition: delete-aws-volumes
+    transform: 
+      result: |
+        js(
+            var newArray = new Array();
+
+            changeArray = data.result
+            snapshotArray = data.return
+
+            changeArray.forEach(change => {
+              snapshotArray.forEach(snap => {
+                  if (snap['aws-cli'][0].result.VolumeId === change.u_volume_id) {
+                    change["u_snapshot_id"] = snap['aws-cli'][0].result.SnapshotId 
+                    newArray.push(change)
+                  } 
+              });
+            });
+
+            items = new Object()
+            items.items = newArray
+            return items
+        )
+
+  #
+  # Tag the volumes with random stuff
+  #
+  - id: delete-aws-volumes
+    log: jq(.)
+    # log: "Delete the volumes for which the snapshots have been succesfull"
+    type: foreach
+    array: 'jq( [.result.items[]] )'
+    action:
+      function: aws-cli
+      secrets: ["AWS_KEY","AWS_SECRET"]
+      input:
+        access-key: jq(.secrets.AWS_KEY)
+        secret-key: jq(.secrets.AWS_SECRET)
+        region: jq(.u_region)
+        commands:
+        - command: aws ec2 delete-volume --volume-id jq(.u_volume_id)
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transition: update-change
+
+  #
+  # Create a Servicenow Change request 
+  #
+  - id: update-change
+    log: Updating the ServiceNow change request with the appropriate change request details and status
+    # log: jq(.)
+    type: action
+    action:
+      function: run-change
+      secrets: ["SNC_URL","SNC_USER","SNC_PASSWORD"]
+      input:
+        sncurl: jq(.secrets.SNC_URL)
+        sncusername: jq(.secrets.SNC_USER)
+        sncpassword: jq(.secrets.SNC_PASSWORD)
+        action: "update"
+        change_sys_id: 'jq(.result.items[0].u_change_sys_id |tostring)'
+        content:
+          close_code: "successful"
+          close_notes: 'jq(. |tostring)'
+          state: "0"
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transition: print-all
+
+  #
+  # Print everything to close off the workflow
+  #
+  - id: print-all
+    type: noop
+    log: jq(.)
+
+  #
+  # Handle any failed connections
+  #
+  - id: exception-catch
+    log: 'Failed with the following: jq(.) - creating an incident'
+    type: generateEvent
+    event: 
+      type: com.direktiv.exception.create.incident
+      source: cost-recovery-workflows/delete-instances-aws
+      data: jq(.error)

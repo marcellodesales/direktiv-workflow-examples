@@ -1,0 +1,193 @@
+#
+# This workflow will only be fired on an "google.cloud.audit.log.v1.written" event being received from GCP. The workflow
+# checks the event type to ensure that it's only executed on (protoPayload.methodName == "v1.compute.instances.delete" and 
+# .operation.first) event type.
+#
+# It will query the GCP environment for the volumes attached to the machine, and if any of the volumes are not deleted
+# send a request to ServiceNow requesting deletion
+#
+description: Workflow which deletes orphaned Volumes based on ServiceNow approval, but actioned using GCP events based on a VM deletion occurring
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# vault workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: check-event
+  event: 
+    type: google.cloud.audit.log.v1.written
+
+functions:
+  - id: gcp-cli
+    image: gcr.io/direktiv/functions/gcp:1.0
+    type: knative-workflow
+  - id: run-change
+    type: subflow
+    workflow: servicenow-workflows/change/snc-change-subflow
+  - id: update-snc-table
+    type: subflow
+    workflow: servicenow-workflows/update-table/update-snc-table
+  - id: email-template
+    image: gcr.io/direktiv/functions/mustache:1.0
+    type: knative-workflow
+  - id: send-email
+    image: gcr.io/direktiv/functions/sendmail:1.0
+    type: knative-workflow
+
+states:
+  #
+  # We need to check that the event is a "first" delete event for Google Cloud
+  #
+  - id: check-event
+    # log: jq(.)
+    log: Event received - jq(."google.cloud.audit.log.v1.written".data.protoPayload.methodName)
+    type: switch
+    defaultTransition: event-filter-failed
+    conditions:
+    - condition: jq(."google.cloud.audit.log.v1.written".data.protoPayload.methodName == "v1.compute.instances.delete" and ."google.cloud.audit.log.v1.written".data.operation.first)
+      transition: get-instance-details
+      transform: 'jq( { data: ."google.cloud.audit.log.v1.written".data } )'
+
+  #
+  # Confirmed that the machine is in going into a terminated state, now we need to get volumes associated with the instance 
+  #
+  - id: get-instance-details
+    log: jq(.)
+    # log: Retrieve all the volumes not marked for deletion
+    type: action
+    action:
+      function: gcp-cli
+      secrets: ["GCP_KEY", "GCP_PROJECT", "GCP_ACCOUNT"]
+      input: 
+        account: jq(.secrets.GCP_ACCOUNT)
+        project: jq(.secrets.GCP_PROJECT)
+        key: jq(.secrets.GCP_KEY | @base64 )
+        commands:
+        - command: gcloud compute instances describe jq(.data.protoPayload.authorizationInfo[0].resourceAttributes.name) --format=json
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transform: 'jq({result: (.data.resource.labels.zone as $zone | .return.gcp[0].result.name as $instanceid | [[.return.gcp[0].result.disks[] | select(.autoDelete == false)][] | {instanceid: $instanceid, volumeid: .source, availabilityzone: $zone, region: $zone, cloud: "gcp" }]) })'
+    transition: create-change
+
+  #
+  # Create a Servicenow Change request with all the details popualted in the Change Description (as a reference)
+  #
+  - id: create-change
+    #log: "Creating a servicenow.com change request with the appropriate change request details"
+    log: jq(.)
+    type: action
+    action:
+      function: run-change
+      secrets: ["SNC_URL","SNC_USER","SNC_PASSWORD"]
+      input:
+        sncurl: jq(.secrets.SNC_URL)
+        sncusername: jq(.secrets.SNC_USER)
+        sncpassword: jq(.secrets.SNC_PASSWORD)
+        action: "create"
+        content:
+          description: 'jq(.result |tostring)'
+          impact: 3
+          severity: 1
+          short_description: "Direktiv Cloud Cost Recovery Change: unused volume deletion"
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transition: update-snc-table
+
+  #
+  # Update the ServiceNow table with all the information for the change to be approved
+  #
+  - id: update-snc-table
+    # log: jq(.)
+    log: "Updating the table in ServiceNow containing volume-ids for which deletion approval is requested: change jq(.return.result.result.number)"
+    type: foreach
+    array: 'jq(.return.result.result.number as $change_number | .return.result.result.sys_id as $sys_id  | [.result[] | . + { change: $change_number,  sys_id: $sys_id } ])'
+    action:
+      function: update-snc-table
+      secrets: ["SNC_URL","SNC_USER","SNC_PASSWORD"]
+      input:
+        sncurl: jq(.secrets.SNC_URL)
+        sncusername: jq(.secrets.SNC_USER)
+        sncpassword: jq(.secrets.SNC_PASSWORD)
+        volumeid: jq(.volumeid)
+        instanceid: jq(.instanceid)
+        sys_id: jq(.sys_id)
+        change: jq(.change)
+        availabilityzone: jq(.availabilityzone)
+        region: jq(.region)
+        cloud: jq(.cloud)
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transform: 'jq( { items: .result, change: .return[0].change, url: (.return[0].sncurl + "/change_request.do?sys_id=" + .return[0].sys_id)} )'
+    transition: create-email-template
+
+  #
+  # Create the email content using an email template 
+  #
+  - id: create-email-template
+    # log: jq(.)
+    log: Creating the email template
+    type: action
+    action:
+      function: email-template
+      files:
+      - key: delete-instances-template.tpl
+        scope: workflow
+      input: 
+        template: delete-instances-template.tpl
+        data: 'jq(.)'
+    transition: send-email
+
+  # Send an unencrypted email message with the attachments.
+  - id: send-email
+    # log: jq(.)
+    log: Sending email to owner of volumes and instances
+    type: action
+    action:
+      secrets: ["EMAIL_USER", "EMAIL_PASSWORD"]
+      function: send-email
+      input: 
+        smtp:
+          server: smtp.gmail.com:587
+          user: jq(.secrets.EMAIL_USER)
+          password: jq(.secrets.EMAIL_PASSWORD)
+        emails:
+        - from: Wilhelm Wonigkeit<wilhelm.wonigkeit@direktiv.io>
+          to:
+          - wilhelm.wonigkeit@direktiv.io
+          subject: 'Change jq(.change) raised: removal for volumes not deleted during instance deletion'
+          message:
+            name: message
+            data: 'jq(.return.mustache.result)'
+          contentType: text/html
+    catch:
+      - error: "*"
+        transition: exception-catch
+    transition: print-all
+
+  #
+  # Handle any incorrect AWS events coming our way
+  #
+  - id: event-filter-failed
+    type: noop
+
+  #
+  # Print everything to close off the workflow
+  #
+  - id: print-all
+    type: noop
+    log: jq(.)
+
+  #
+  # Handle any failed connections
+  #
+  - id: exception-catch
+    log: 'Failed with the following: jq(.) - creating an incident'
+    type: generateEvent
+    event: 
+      type: com.direktiv.exception.create.incident
+      source: cost-recovery-workflows/delete-instances-aws
+      data: jq(.error)

@@ -1,0 +1,86 @@
+################################################################################
+#
+# This workflow needs the following secrets to be set
+#  - GCP_KEY: ServiceAccount key for the Google Cloud Translator
+#  - TWITTER_BEARERTOKEN: Bearer Token for the use with Twitter API
+#
+# This workflow needs the following inputs
+#  - searchstring: the search string to be used to scan Twitter
+#  - projectid: Project ID for Google Cloud
+#  - location: Location for Google Cloud Translator access
+#
+description: A simple workflow that runs a container called py-tweets-lang from hub.docker.com
+
+functions:
+- id: python
+  image: gcr.io/direktiv/apps/python:1.0
+  type: knative-workflow
+
+states:
+# make sure all the inputs are set
+- id: validate-input
+  type: validate
+  schema:
+    title: Check Twitter Language Types
+    type: object
+    required: ["projectid", "location", "searchstring","maxsearchreturns","outputfile"]
+    properties:
+      projectid:
+        title: GCP Project ID
+        type: string
+        default: "direktiv"
+      location:
+        title: GCP Location
+        type: string
+        default: "global"
+      searchstring:
+        title: Twitter Search String
+        type: string
+        default: "direktiv"
+      maxsearchreturns:
+        title: Maximum Search Results
+        type: integer
+        default: 10
+      outputfile:
+        title: Output file location
+        type: string
+        default: "/tmp/output.json"        
+  transition: run-container
+
+- id: run-container 
+  type: action
+  action:
+    function: python
+    secrets: ["GCP_KEY", "TWITTER_BEARERTOKEN"]
+    input:
+      files:
+      - name: input.json
+        data: |
+          {  
+            "bearer_token": "jq(.secrets.TWITTER_BEARERTOKEN)",
+            "gcp_projectid": "jq(.projectid)",
+            "gcp_location": "jq(.location)",
+            "twitter_searchstring": "jq(.searchstring)",
+            "max_search_returns": "jq(.maxsearchreturns)",
+            "outputfile": "jq(.outputfile)",
+            "gcp_key": jq(.secrets.GCP_KEY | fromjson)
+          }
+      commands:
+      - command: pyenv local 3.8.13
+      - command: pip3 install tweepy
+      - command: pip3 install grpcio==1.48.0
+      - command: pip3 install googleapis-common-protos==1.56.3 
+      - command: pip3 install google-cloud-translate==3.8.1 
+      - command: pip3 install google-auth
+      - command: python3 py-tweets-lang.py -i input.json -o jq(.outputfile)
+      - command: cat jq(.outputfile)
+    files:
+    - key: py-tweets-lang.py
+      scope: workflow
+  transition: logall
+  transform:
+    tweets: jq(.return.python[7])
+
+- id: logall
+  type: noop
+  log: jq(.)

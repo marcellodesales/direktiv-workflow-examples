@@ -1,0 +1,62 @@
+#{
+#  "specversion": "1.0",
+#  "id": "1",
+#  "type": "com.stock.check",
+#  "source": "/service/order",
+#  "units": 100,
+#  "total": 200,
+#  "zip": 12345,
+#  "action": "check"
+#}
+description: stock service
+start:
+  type: eventsXor
+  state: check-or-cancel
+  events: 
+    - type: com.stock.check
+    - type: com.payment.failure
+functions:
+- id: stock
+  service: stock
+  type: knative-namespace
+states:
+- id: check-or-cancel
+  type: switch
+  conditions:
+    - condition: jq(."com.payment.failure")
+      transition: generate-failure-event
+  defaultTransition: stock-action
+- id: stock-action
+  type: action
+  log: jq(.)
+  action:
+    function: stock
+    input: 
+      units: jq(."com.stock.check".data.units)
+      id: jq(."com.stock.check".data.orderid)
+      action: 'jq(if ."com.stock.check" then "check" else "cancel" end)'
+  transition: generate-success-event
+  catch:
+  - error: "*"
+    transition: generate-failure-event
+- id: generate-success-event
+  type: generateEvent
+  log: generating success event for request jq(."com.stock.check".data.orderid)
+  event: 
+    type: com.payment.process
+    source: /services/stock
+    data: ""
+    context:
+      orderid: jq(."com.stock.check".data.orderid)
+      total: jq(."com.stock.check".data.total)
+      zip: jq(."com.stock.check".data.zip)
+- id: generate-failure-event
+  type: generateEvent
+  log: generating failure event for request jq(."com.stock.check".data.orderid)
+  event: 
+    type: com.stock.failure
+    source: /services/stock
+    context:
+      id: jq(."com.stock.check".data.orderid)
+
+

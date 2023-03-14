@@ -1,0 +1,27 @@
+# Example workflow: 'Send a message to a Google Chat Bot or Room'
+# 
+# The Chatroom Webhook: hhttps://chat.googleapis.com/v1/spaces/AAAAJqBP7rw/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=D-7vYNTO2oSoZUHafGAgujBt9qqN83uF-CnQRbAg-7w%3D
+#
+# This workflow will send a message to the Google Chat room
+# defined by the webhook URL above.
+# The workflow expects the following input:
+# {
+#   "message": "This is a sample message to be sent"
+# }
+#
+#
+
+description: "This sends a message to a Google Chat room" 
+functions:
+- id: pushtochat
+  image: vorteil/googlemsg:latest
+  type: reusable
+states:
+- id: pushtochat
+  type: action
+  action:
+    function: pushtochat
+    secrets: ["GOOGLE_CHAT_WEBHOOK"]
+    input: 
+      message: jq(.message)
+      url: jq(.secrets.GOOGLE_CHAT_WEBHOOK)

@@ -1,0 +1,61 @@
+# Event Input:
+# {
+#   "com.direktiv.twitterlang.result": {
+#     "data": {
+#       <tweets
+#     },
+#     "datacontenttype": "application/json",
+#     "endpoint": "linux",
+#     "id": "8850c81e-1db4-4ecd-8734-dbb86380536a",
+#     "ipaddress": "3.26.24.101",
+#     "source": "/g_events_combined/g_events_combined_workflow",
+#     "specversion": "1.0",
+#     "type": "com.direktiv.twitterlang.result",
+#     "lang": "english" | "swedish" | "danish"
+#   }
+# }
+#
+description: Event email based on the language (undefined)
+
+#
+# The start definition which starts the worklfow based on the event received from the
+# previous workflow. Example of the event is shown above in the description
+#
+start:
+  type: event
+  state: email-undefined
+  event: 
+    type: com.direktiv.twitterlang.result
+    context:
+      lang: "undefined"
+
+#
+# Functions for email
+#
+functions:
+  - id: send-email
+    image: direktiv/smtp-bare:latest
+    type: knative-workflow
+
+states:
+#
+- id: email-undefined
+  log: jq(.)
+  type: noop
+  transition: send-email
+
+# Send an unencrypted email message with the attachments.
+- id: send-email
+  type: action
+  action:
+    secrets: ["EMAIL_USER", "EMAIL_PASSWORD"]
+    function: send-email
+    input:
+      address: "smtp.gmail.com"
+      port: 587
+      tls: true
+      from: jq(.secrets.EMAIL_USER)
+      password: jq(.secrets.EMAIL_PASSWORD)
+      to: "wilhelm.wonigkeit@direktiv.io"
+      subject: "Undefined email Tweets"
+      body: jq(."com.direktiv.twitterlang.result".data.results)

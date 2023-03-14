@@ -1,0 +1,210 @@
+#
+# Workflow which does the following:
+#     - Creates 20 volumes of varying size (done)
+#     - Randomly tag the volumes with either {delete|retain} (done)
+#     - Creates SNC change request to delete all {delete} tagged volumes (done)
+#     - Waits for SNC approval (done)
+#     - Snapshots the volumes meant for deletion (but also forces a failure on one of them) (done)
+#     - Deletes volumes succesfully snapshotted (done)
+#     - Closes the change request
+#     - Creates an incident for the failed one
+#     - Send an email, Slack and Teams message
+#
+description: Workflow which deletes orphaned Volumes based on ServiceNow approval
+
+#
+# Use the SSH/SCP direktiv-app container to make the connnection to the type: linux
+# devices. This is a generic container which executes SSH or SCP commands / scripts
+# and can be used for anything else SSH
+#
+functions:
+- id: aws-cli
+  service: aws-cli
+  type: knative-namespace
+- id: run-change
+  type: subflow
+  workflow: servicenow-workflows/change/snc-change-subflow
+- id: update-snc-table
+  type: subflow
+  workflow: servicenow-workflows/update-table/update-snc-table
+- id: email-template
+  service: email-template
+  type: knative-namespace
+- id: send-email
+  service: send-email
+  type: knative-namespace
+
+states:
+#
+# Set up and validate the inputs to the workflow. Only the absolutes are validated.
+#
+- id: validate
+  type: validate
+  schema:
+    title: "Inputs to the demo workflow"
+    type: object
+    required: ["awsregion"]
+    properties:
+      awsregion:
+        title: "AWS Region selector"
+        type: string
+        default: "us-west-1"
+        enum: ["us-west-1","ap-southeast-2"]
+      sizes:
+        title: "Volume sizes"
+        type: array
+        # default: [80, 100, 90, 50, 20, 20, 80, 200, 150, 100]
+        # default: [20, 20, 80, 200, 150, 100]
+        default: [10, 20]
+        items:
+          type: number
+  transition: create-aws-volumes
+#
+# Create the volumes with varying sizes
+#
+- id: create-aws-volumes
+  type: foreach
+  array: 'jq( .awsregion as $awsregion | [.sizes[] | { size: ., awsregion: $awsregion }]  )'
+  # log: jq(.)
+  log: "Creating volumes in the  jq(.awsregion) region"
+  action:
+    function: aws-cli
+    secrets: ["AWS_KEY","AWS_SECRET"]
+    input:
+      access-key: jq(.secrets.AWS_KEY)
+      secret-key: jq(.secrets.AWS_SECRET)
+      region: jq(.awsregion)
+      commands:
+      - command: aws ec2 create-volume --size jq(.size) --encrypted --region jq(.awsregion) --availability-zone jq(if .awsregion == "us-west-1" then "us-west-1b" else "ap-southeast-2a" end)
+  catch:
+    - error: "*"
+      transition: exception-catch
+  transition: tag-aws-volumes
+  transform: 'jq( .awsregion as $awsregion | { result: [ .return[]."aws-cli"[] | { volumeid: .result.VolumeId, awsregion: $awsregion, availabilityzone: .result.AvailabilityZone } ] } )'
+
+#
+# Tag the volumes with random stuff
+#
+- id: tag-aws-volumes
+  # log: jq(.)
+  log: "Creating tags for the volumes"
+  type: foreach
+  array: 'jq([ .result[] | . ])'
+  action:
+    function: aws-cli
+    secrets: ["AWS_KEY","AWS_SECRET"]
+    input:
+      access-key: jq(.secrets.AWS_KEY)
+      secret-key: jq(.secrets.AWS_SECRET)
+      region: jq(.awsregion)
+      commands:
+      - command: aws ec2 create-tags --resources jq(.volumeid) --tags Key=Delete,Value=True
+  catch:
+    - error: "*"
+      transition: exception-catch
+  transition: create-change
+
+#
+# Create a Servicenow Change request 
+#
+- id: create-change
+  log: "Creating a servicenow.com change request with the appropriate change request details"
+  # log: jq(.)
+  type: action
+  action:
+    function: run-change
+    secrets: ["SNC_URL","SNC_USER","SNC_PASSWORD"]
+    input:
+      sncurl: jq(.secrets.SNC_URL)
+      sncusername: jq(.secrets.SNC_USER)
+      sncpassword: jq(.secrets.SNC_PASSWORD)
+      action: "create"
+      content:
+        description: 'jq(.result |tostring)'
+        impact: 3
+        severity: 1
+        short_description: "Cloud Cost Recovery Change: unused volume deletion"
+  catch:
+    - error: "*"
+      transition: exception-catch
+  transition: update-snc-table
+
+- id: update-snc-table
+  # log: jq(.)
+  log: "Updating the table in ServiceNow containing volume-ids for which deletion approval is requested: change jq(.return.result.result.number)"
+  type: foreach
+  array: 'jq(.return.result.result.number as $change_number | .return.result.result.sys_id as $sys_id  | [.result[] | . + { change: $change_number,  sys_id: $sys_id } ])'
+  action:
+    function: update-snc-table
+    secrets: ["SNC_URL","SNC_USER","SNC_PASSWORD"]
+    input:
+      sncurl: jq(.secrets.SNC_URL)
+      sncusername: jq(.secrets.SNC_USER)
+      sncpassword: jq(.secrets.SNC_PASSWORD)
+      volumeid: jq(.volumeid)
+      sys_id: jq(.sys_id)
+      change: jq(.change)
+      availabilityzone: jq(.availabilityzone)
+      awsregion: jq(.awsregion)
+  catch:
+    - error: "*"
+      transition: exception-catch
+  transform: 'jq( { items: .result, change: .return[0].change, url: (.return[0].sncurl + "/change_request.do?sys_id=" + .return[0].sys_id)} )'
+  transition: create-email-template
+
+#
+# Create the email content using an email template 
+#
+- id: create-email-template
+  # log: jq(.)
+  log: Creating the email template
+  type: action
+  action:
+    function: email-template
+    files:
+    - key: existing-volumes-template.tpl
+      scope: workflow
+    input: 
+      template: existing-volumes-template.tpl
+      data: 'jq(.)'
+  transition: send-email
+
+# Send an unencrypted email message with the attachments.
+- id: send-email
+  # log: jq(.)
+  log: Sending email to owner of volumes and instances
+  type: action
+  action:
+    secrets: ["EMAIL_USER", "EMAIL_PASSWORD"]
+    function: send-email
+    input: 
+      smtp:
+        server: smtp.gmail.com:587
+        user: jq(.secrets.EMAIL_USER)
+        password: jq(.secrets.EMAIL_PASSWORD)
+      emails:
+      - from: Wilhelm Wonigkeit<wilhelm.wonigkeit@direktiv.io>
+        to:
+        - wilhelm.wonigkeit@direktiv.io
+        subject: 'Change jq(.change) raised: removal for existing volumes'
+        message:
+          name: message
+          data: 'jq(.return.mustache.result)'
+        contentType: text/html
+  catch:
+  - error: "*"
+  transition: print-all
+
+#
+# Print everything to close off the workflow
+#
+- id: print-all
+  type: noop
+  log: jq(.)
+
+#
+# Handle any failed connections
+#
+- id: exception-catch
+  type: noop
+  log: 'Failed with the following: jq(.)'

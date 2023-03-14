@@ -1,0 +1,41 @@
+# Example workflow: 'Get a new Dad joke every 5 minutes'
+# 
+#
+# This workflow will get a new dad joke every 5 minutes. The
+# jokes are then posted to a Google Chat room
+#
+# Webhook: https://chat.googleapis.com/v1/spaces/AAAAcuVWfuE/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=zgiLJ3nHgA4_fBkK637pgpIbqjnfyYvCrnz_3pAMbno%3D
+#
+#
+
+description: "This is a scheduled workflow which retrieves a Dad Joke and posts it to a Google Chat Room" 
+start:
+  type: scheduled
+  cron: "*/5 * * * *"
+functions:
+  - id: getjoke
+    service: request
+    type: knative-namespace
+  - id: pushtochat
+    image: vorteil/googlemsg:latest
+    type: reusable
+states:
+  - id: get-dad-joke
+    type: action
+    action:
+      function: getjoke
+      input:
+        method: GET
+        url: https://icanhazdadjoke.com
+        headers:
+          "Accept": "application/json"
+    transition: pushtochat
+  - id: pushtochat
+    type: action
+    log: jq(.)
+    action:
+      function: pushtochat
+      secrets: ["GOOGLE_CHAT_DADJOKE_WEBHOOK"]
+      input:
+        message: 'jq(.return.body.joke)'
+        url: jq(.secrets.GOOGLE_CHAT_DADJOKE_WEBHOOK)

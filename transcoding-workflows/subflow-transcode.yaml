@@ -1,0 +1,38 @@
+description: A simple 'no-op' state that returns 'Hello world!'
+
+functions:
+  - id: videotranscoding
+    image: wwonigkeit/videotranscoding:latest
+    type: knative-workflow
+    size: large
+  - id: aws-cli
+    image: gcr.io/direktiv/functions/aws-cli:1.0
+    type: knative-workflow
+    size: large
+
+states:
+  - id: get-video
+    type: action
+    action:
+      function: aws-cli
+      secrets: ["LINNODE_S3_SECRET_KEY", "LINODE_S3_ACCESS_KEY"]
+      input:
+        access-key: jq(.secrets.LINODE_S3_ACCESS_KEY)
+        secret-key: jq(.secrets.LINNODE_S3_SECRET_KEY)
+        region: jq(.region)
+        commands:
+        - command: aws s3 cp --endpoint jq(.url) s3://jq(.bucket)/jq(.Key) out/workflow/jq(.Key | match(".*/(.*$)").captures[0].string)
+    # transform: 'jq({ movies: (.bucket as $bucket | .region as $region | .url as $url | [.return."aws-cli"[].result.Contents[] | . + {bucket: $bucket, url: $url,  bucket: $bucket,  region: $region}])})'
+
+  - id: videotranscoding
+    type: action
+    action:
+      function: videotranscoding
+      input:
+        commands:
+        - command: ffmpeg -i https://direktiv-videos.s3.us-west-1.amazonaws.com/input.avi output.mp4
+        - command: cp output.mp4 out/instance/output.mp4
+        - command: ffprobe -v quiet -print_format json -show_format -show_streams output.mp4
+    # transition: logall
+
+

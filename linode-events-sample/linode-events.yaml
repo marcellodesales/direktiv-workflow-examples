@@ -1,0 +1,45 @@
+#
+# This workflow is used with the Linode listener available in the following repository:
+# 
+
+description: A simple workflow that waits for Linode Events
+
+start:
+  type: eventsXor
+  state: check-event
+  events:
+  - type: token_create
+  - type: linode_boot
+
+functions:
+  - id: http-request
+    image: gcr.io/direktiv/functions/http-request:1.0
+    type: knative-workflow
+
+states:
+  - id: check-event
+    log: jq(.)
+    type: switch
+    defaultTransition: print-event
+    conditions:
+    - condition: 'jq(.token_create != null)'
+      transition: print-event
+    - condition: 'jq(.linode_boot != null)'
+      transition: print-node-info
+
+  - id: print-node-info
+    type: action
+    log: jq(.)
+    action:
+      secrets: ["LINODE_TOKEN"]
+      function: http-request
+      input: 
+        debug: true
+        url: jq("https://api.linode.com" + .linode_boot.data.entity.url)'
+        headers:
+          Authorization: "Bearer jq(.secrets.LINODE_TOKEN)"
+    transform: jq(.return[0].result)
+
+  - id: print-event
+    type: noop
+    log: jq(.)

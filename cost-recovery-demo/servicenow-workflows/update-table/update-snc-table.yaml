@@ -1,0 +1,72 @@
+#
+# Table: u_cost_recovery_volumes
+# Columns:
+#     change_number
+#     change_sys_id
+#     volume_id
+#     delete
+#     u_availability_zone
+#     u_region
+#
+#
+description: Update SNC custom table u_cost_recovery_volumes
+#
+# Use the SSH/SCP direktiv-app container to make the connnection to the type: linux
+# devices. This is a generic container which executes SSH or SCP commands / scripts
+# and can be used for anything else SSH
+#
+functions:
+# From https://apps.direktiv.io/search-results/http-request?v=1.0
+- id: http-request
+  image: gcr.io/direktiv/functions/http-request:1.0
+  type: knative-workflow
+
+states:
+- id: push-volumes
+  type: action
+  log: jq(.)
+  action:
+    function: http-request
+    input:
+      debug: false
+      method: POST
+      url: 'jq(.sncurl)/api/now/table/u_cost_recovery_volumes'
+      params:
+        sysparm_display_value: "true" # Options are true, false or all
+        sysparm_exclude_reference_link: "false" # Flag that indicates whether to exclude Table API links for reference fields
+        sysparm_input_display_value: "false" # Flag that indicates whether to set field values using the display value or the actual value.
+      content:
+        value:
+          # The values below are examples only, every servicenow instance is different - PLEASE REMEMBER TO CONTACT YOUR SNC ADMINISTRATOR
+          # TO GET THE REQUIRED FIELDS
+          u_volume_id: 'jq(.volumeid)' # Free form string to add description (long - detailed)
+          u_change_sys_id: 'jq(.sys_id)' # Number ranging from 1 - High to 3 - Low
+          u_change_number: 'jq(.change)' # Number ranging from 1 - High to 3 - Low
+          u_delete: "true" # Free form string to add description (long - detailed)
+          u_availability_zone: 'jq(.availabilityzone)'
+          u_region: 'jq(.region)'
+          u_cloud: 'jq(.cloud)'
+          u_instance_id: 'jq(.instanceid)'
+      headers:
+        Accept: application/json
+        Content-Type: application/json
+      username: jq(.sncusername)
+      password: jq(.sncpassword)
+  catch:
+    - error: "*"
+      transition: exception-catch
+  transition: print-all
+
+#
+# Print everything to close off the workflow
+#
+- id: print-all
+  type: noop
+  log: 'Success in updating table: jq(.)'
+
+#
+# Handle any failed connections
+#
+- id: exception-catch
+  type: noop
+  log: 'Failed with the following: jq(.)'

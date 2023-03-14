@@ -1,0 +1,50 @@
+#{
+#  "specversion": "1.0",
+#  "id": "1",
+#  "type": "com.delivery.start",
+#  "source": "/service/payment",
+#  "zip": 12435,
+#  "action": "sen"
+#}
+description: delivery service
+start:
+  type: event
+  state: delivery-action
+  event: 
+    type: com.delivery.start
+functions:
+  - id: delivery
+    service: delivery
+    type: knative-namespace
+states:
+  - id: delivery-action
+    type: action
+    log: jq(.)
+    action:
+      function: delivery
+      input: 
+        zip: 'jq(."com.delivery.start".zip)'
+        id: 'jq(."com.delivery.start".orderid)'
+        action: "send"
+    transition: generate-success-event
+    catch:
+    - error: "*"
+      transition: generate-failure-event
+  - id: generate-success-event
+    type: generateEvent
+    log: generating success event for request jq(."com.delivery.start".orderid)
+    event: 
+      type: com.delivery.success
+      source: /services/delivery
+      context:
+        orderid: 'jq(."com.delivery.start".orderid)'
+  - id: generate-failure-event
+    type: generateEvent
+    log: generating failure event for request jq(."com.delivery.start".orderid)
+    event: 
+      type: com.delivery.failure
+      source: /services/delivery
+      data: ""
+      context:
+        orderid: jq(."com.delivery.start".orderid)
+

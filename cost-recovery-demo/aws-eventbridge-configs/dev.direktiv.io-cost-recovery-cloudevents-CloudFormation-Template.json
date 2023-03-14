@@ -1,0 +1,81 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CloudFormation template for EventBridge rule 'dev.direktiv.io-cost-recovery-cloudevents'",
+  "Resources": {
+    "Rule0Connection0": {
+      "Type": "AWS::Events::Connection",
+      "Properties": {
+        "AuthorizationType": "API_KEY",
+        "AuthParameters": {
+          "ApiKeyAuthParameters": {
+            "ApiKeyName": "direktiv-token",
+            "ApiKeyValue": {
+              "Ref": "Rule0Connection0ApiKeyValue"
+            }
+          }
+        },
+        "Name": "dev.direktiv.io-cloud-event"
+      }
+    },
+    "Rule0ApiDestination0": {
+      "Type": "AWS::Events::ApiDestination",
+      "Properties": {
+        "ConnectionArn": {
+          "Fn::GetAtt": ["Rule0Connection0", "Arn"]
+        },
+        "HttpMethod": "POST",
+        "InvocationEndpoint": "https://dev.direktiv.io/api/namespaces/cost-recovery-demo/broadcast",
+        "InvocationRateLimitPerSecond": 300,
+        "Name": "dev.direktiv.io-cloudevents-api"
+      }
+    },
+    "EventRule0": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "EventBusName": "default",
+        "EventPattern": {
+          "source": ["aws.ec2"],
+          "detail-type": ["AWS API Call via CloudTrail"],
+          "detail": {
+            "eventSource": ["ec2.amazonaws.com"],
+            "eventName": ["TerminateInstances"]
+          }
+        },
+        "Name": "dev.direktiv.io-cost-recovery-cloudevents",
+        "State": "ENABLED",
+        "Targets": [{
+          "Id": "Id52bdf1dd-39ff-4beb-98dd-6404230ec172",
+          "Arn": {
+            "Fn::GetAtt": ["Rule0ApiDestination0", "Arn"]
+          },
+          "RoleArn": "arn:aws:iam::338328518639:role/service-role/Amazon_EventBridge_Invoke_Api_Destination_785287045",
+          "InputTransformer": {
+            "InputPathsMap": {
+              "id": "$.id",
+              "source": "$.source",
+              "state": "$.detail.state",
+              "subject": "$.source",
+              "time": "$.time",
+              "type": "$.detail-type"
+            },
+            "InputTemplate": " {\"specversion\":\"1.0\", \"id\":<id>, \"source\":<source>, \"type\":<type>, \"subject\":<subject>, \"time\":<time>, \"data\":<aws.events.event.json>}"
+          },
+          "HttpParameters": {
+            "HeaderParameters": {
+              "content-type": "application/cloudevents+json; charset=utf-8"
+            }
+          }
+        }]
+      }
+    }
+  },
+  "Parameters": {
+    "Rule0Connection0ApiKeyValue": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": "1",
+      "MaxLength": "512",
+      "AllowedPattern": "^[ \\t]*[^\\x00-\\x1F:\\x7F]+([ \\t]+[^\\x00-\\x1F:\\x7F]+)*[ \\t]*$"
+    }
+  }
+}

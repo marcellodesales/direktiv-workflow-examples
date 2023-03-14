@@ -1,0 +1,63 @@
+# 
+# A video transcoding example using ffmpeg
+#
+# The bucket location is a Linode object store, but uses the S3 command line (so the AWS cli can be used)
+#
+
+description: A simple 'no-op' state that returns 'Hello world!'
+
+functions:
+  - id: videotranscoding
+    image: wwonigkeit/videotranscoding:latest
+    type: knative-workflow
+    size: large
+  - id: aws-cli
+    image: gcr.io/direktiv/functions/aws-cli:1.0
+    type: knative-workflow
+    size: small
+  - id: subflow-transcode
+    type: subflow
+    workflow: subflow-transcode
+
+states:
+  - id: validate
+    type: validate
+    schema:
+      title: "Inputs to the video transcoding workflow"
+      type: object
+      required: ["url","bucket"]
+      properties:
+        url:
+          title: "S3 Bucket URL"
+          type: string
+          default: "https://us-east-1.linodeobjects.com"
+        bucket:
+          title: "S3 Bucket Name"
+          type: string
+          default: "direktiv-demo"
+        region:
+          title: "S3 Linode Region"
+          type: string
+          default: "us-east-1"
+    transition: list-videos
+
+  - id: list-videos
+    type: action
+    action:
+      function: aws-cli
+      secrets: ["LINNODE_S3_SECRET_KEY", "LINODE_S3_ACCESS_KEY"]
+      input:
+        access-key: jq(.secrets.LINODE_S3_ACCESS_KEY)
+        secret-key: jq(.secrets.LINNODE_S3_SECRET_KEY)
+        region: jq(.region)
+        commands:
+        - command: aws --output json s3api list-objects --bucket jq(.bucket) --endpoint jq(.url)
+    transform: 'jq({ movies: (.bucket as $bucket | .region as $region | .url as $url | [.return."aws-cli"[].result.Contents[] | . + {bucket: $bucket, url: $url,  bucket: $bucket,  region: $region}])})'
+    transition: run-transcoding
+
+  - id: run-transcoding
+    type: foreach
+    array: 'jq(.movies)'
+    action:
+      function: subflow-transcode
+      input: jq(.)
